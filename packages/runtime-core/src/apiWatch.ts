@@ -129,7 +129,23 @@ export function watch<T = any>(
   }
   return doWatch(source, cb, options)
 }
-
+/**
+ * 实现监听数据的主要代码
+ * 参考：https://cn.vuejs.org/api/reactivity-core.html#watch
+ * @param source 第一个参数是侦听器的源。这个来源可以是以下几种：
+ * 一个函数，返回一个值
+ * 一个 ref
+ * 一个响应式对象
+ * 或是由以上类型的值组成的数组
+ * @param cb 发生变化时要调用的回调函数。这个回调函数接受三个参数：新值、旧值，以及一个用于注册副作用清理的回调函数。该回调函数会在副作用下一次重新执行前调用，可以用来清除无效的副作用，例如等待中的异步请求。
+ * @param param2 第三个可选的参数是一个对象，支持以下这些选项：
+ * immediate：在侦听器创建时立即触发回调。第一次调用时旧值是 undefined。
+ * deep：如果源是对象，强制深度遍历，以便在深层级变更时触发回调。
+ * flush：调整回调函数的刷新时机。关于刷新时机参考：https://cn.vuejs.org/guide/essentials/watchers.html#callback-flush-timing
+ * onTrack / onTrigger：调试侦听器的依赖。
+ * @param instance 当前的响应式对象
+ * @returns 
+ */
 function doWatch(
   source: WatchSource | WatchSource[] | WatchEffect,
   cb: WatchCallback | null,
@@ -160,19 +176,25 @@ function doWatch(
     )
   }
 
+  // 封装getter
   let getter: () => any
   const isRefSource = isRef(source)
   if (isRefSource) {
+    // source为ref的情况下封装getter为箭头函数
     getter = () => (source as Ref).value
   } else if (isReactive(source)) {
+    // source为响应式数据的情况下封装getter为箭头函数
     getter = () => source
+    // 默认深响应
     deep = true
   } else if (isArray(source)) {
+    // 解析array，将array中的数据解析开来，逐个封装为getter函数
     getter = () =>
       source.map(s => {
         if (isRef(s)) {
           return s.value
         } else if (isReactive(s)) {
+          // 建立s的响应关系
           return traverse(s)
         } else if (isFunction(s)) {
           return callWithErrorHandling(s, instance, ErrorCodes.WATCH_GETTER)
@@ -183,6 +205,9 @@ function doWatch(
   } else if (isFunction(source)) {
     if (cb) {
       // getter with cb
+      // 当前我们值分析在没有异常的情况下，getter的结果
+      // 没有异常的情况下，getter = () => fn()
+      // 为什么要运行fn呢？因为fn是副作用函数，我们要立刻调用track建立targetMap
       getter = () =>
         callWithErrorHandling(source, instance, ErrorCodes.WATCH_GETTER)
     } else {
@@ -191,6 +216,7 @@ function doWatch(
         if (instance && instance.isUnmounted) {
           return
         }
+        // cleanup存在的话肯定不是第一次调用cb了
         if (cleanup) {
           cleanup()
         }
@@ -213,8 +239,15 @@ function doWatch(
   }
 
   let cleanup: () => void
+  // onInvalidate 用来注册清理失效时的回调
+  // 注意onInvalidate的执行是在cb执行过程中进行的
+  // 所以如果响应式数据没有被改变是不会触发cb的，也不会触发onInvalidate的执行，所以就不会为cleanup赋值
+  // 第一次响应式数据源发生改变的话，cleanup是没有值的
+  // 第二次响应式数据源发生改变，cleanup记录的是上一次onInvalidate的函数参数。
+  // 所以可以使用onInvalidate将上次回调无用化。
   const onInvalidate: InvalidateCbRegistrator = (fn: () => void) => {
     cleanup = runner.options.onStop = () => {
+      // 正常情况下返回的是fn
       callWithErrorHandling(fn, instance, ErrorCodes.WATCH_CLEANUP)
     }
   }
@@ -241,22 +274,33 @@ function doWatch(
     }
     if (cb) {
       // watch(source, cb)
+      // 执行副作用函数后获取的值是newValue，这里的新值是指响应式数据发生改变，触发副作用函数执行，执行以后会返回一个value，这个value就是newValue
+      // 这里就充分利用了effect lazy选项
       const newValue = runner()
       if (deep || isRefSource || hasChanged(newValue, oldValue)) {
         // cleanup before running cb again
+        // 调用回调函数之前先调用过期回调
+        // 由上面的分析可以知道，cleanup记录着用户传入onInvalidate的函数参数，这里对cleanup的调用会改变上次cb执行时作用域的变量。
         if (cleanup) {
           cleanup()
         }
+        // 正常情况下，这里执行的是cb(newValue, oldValue, onInvalidate)
+        // 也就是用户在使用watch时传入的回调函数
+        // 如果用户在cb中定义了onInvalidate，执行cb的过程将会执行onInvalidate
+        // onInvalidate的执行过程见上面的代码分析
         callWithAsyncErrorHandling(cb, instance, ErrorCodes.WATCH_CALLBACK, [
           newValue,
           // pass undefined as the old value when it's changed for the first time
+          // 第一次trigger cb oldValue是undefined
           oldValue === INITIAL_WATCHER_VALUE ? undefined : oldValue,
           onInvalidate
         ])
+        // newValue退出舞台，在副作用函数执行后，变成了oldValue，oldValue被带入下次cb的执行
         oldValue = newValue
       }
     } else {
       // watchEffect
+      // 如果cb不存在的话就调用副作用函数effect
       runner()
     }
   }
@@ -267,6 +311,8 @@ function doWatch(
 
   let scheduler: (job: () => any) => void
   if (flush === 'sync') {
+    // 这里scheduler=job是为了实现什么功能呢？
+    // 实现记录newValue和oldValue
     scheduler = job
   } else if (flush === 'post') {
     scheduler = () => queuePostRenderEffect(job, instance && instance.suspense)
@@ -283,6 +329,9 @@ function doWatch(
     }
   }
 
+  // watch 最终还是通过调用effect函数实现的响应式关系的建立
+  // lazy为true，将包裹用户编写的函数fn的副作用函数返回，runner的执行才会触发副作用函数执行
+  // scheduler是一个比较大的话题。背后对应的也有调度的思想。目前仅站在一个比较低的层次去看待这里的实现。
   const runner = effect(getter, {
     lazy: true,
     onTrack,
@@ -294,17 +343,21 @@ function doWatch(
 
   // initial run
   if (cb) {
+    // 如果传入了immediate true选项，立刻调用job（封装了cb）
+    // 否则调用副作用函数获取返回值，将其返回值作为oldValue，等下次调用cb的时候当做旧的值
     if (immediate) {
       job()
     } else {
       oldValue = runner()
     }
   } else if (flush === 'post') {
+    // 意味着调度函数将副作用函数放在一个微任务队列中执行，并等待DOM更新结束后再执行
     queuePostRenderEffect(runner, instance && instance.suspense)
   } else {
     runner()
   }
 
+  // watch 返回的stop可以终止数据的响应
   return () => {
     stop(runner)
     if (instance) {
@@ -327,11 +380,15 @@ export function instanceWatch(
   return doWatch(getter, cb.bind(publicThis), options, this)
 }
 
+// 仅仅递归读取value，触发track追踪，建立targetMap响应关系。
+// seen是个缓存变量，用来记录读取过value
 function traverse(value: unknown, seen: Set<unknown> = new Set()) {
+  // 如果读取过了value，则什么都不做，直接返回value
   if (!isObject(value) || seen.has(value)) {
     return value
   }
   seen.add(value)
+  // 考虑ref数据，读取的是ref.value
   if (isRef(value)) {
     traverse(value.value, seen)
   } else if (isArray(value)) {
