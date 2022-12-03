@@ -7,6 +7,8 @@ const doc = (typeof document !== 'undefined' ? document : null) as Document
 let tempContainer: HTMLElement
 let tempSVGContainer: SVGElement
 
+// 这里提供操作浏览器节点的operation
+// 这里自定义的operation作为createRenderer的参数，生成一个为浏览器服务的renderer
 export const nodeOps: Omit<RendererOptions<Node, Element>, 'patchProp'> = {
   insert: (child, parent, anchor) => {
     parent.insertBefore(child, anchor || null)

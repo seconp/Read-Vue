@@ -20,7 +20,7 @@ declare module '@vue/reactivity' {
     runtimeDOMBailTypes: Node | Window
   }
 }
-
+// 构建createRenderer函数的options
 const rendererOptions = extend({ patchProp, forcePatchProp }, nodeOps)
 
 // lazy create the renderer - this makes core renderer logic tree-shakable
@@ -29,6 +29,7 @@ let renderer: Renderer<Element> | HydrationRenderer
 
 let enabledHydration = false
 
+// 创建为浏览所用的renderer
 function ensureRenderer() {
   return renderer || (renderer = createRenderer<Node, Element>(rendererOptions))
 }

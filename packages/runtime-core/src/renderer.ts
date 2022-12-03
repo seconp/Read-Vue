@@ -258,7 +258,7 @@ export const enum MoveType {
   LEAVE,
   REORDER
 }
-
+// -----------------------------------上面都是类型的定义，我们先不去care，在阅读下面的代码时再去参考定义。
 const prodEffectOptions = {
   scheduler: queueJob,
   // #1801, #2043 component render effects should allow recursive updates
@@ -376,7 +376,11 @@ export const setRef = (
  * HostNode and HostElement, corresponding to Node and Element types in the
  * host environment. For example, for runtime-dom, HostNode would be the DOM
  * `Node` interface and HostElement would be the DOM `Element` interface.
- *
+ * 
+ * renderer是渲染器，为什么Vue通过createRenderer根据传入的参数创建renderer，而不是直接创建一个固定的renderer来使用？（在Vue中有很多的这种写法，例如在创建副作用函数的时候使用createReactiveObject而不是直接调用effect函数创建）
+ * 这里对应的思想是可扩展（哈哈，理解Java泛型的小伙伴应该知道这里是利用泛型实现的可扩展）
+ * 也就是说，RendererOptions千变万化，会使createRenderer函数生成千变万化的renderer。
+ * 
  * Custom renderers can pass in the platform specific types like this:
  *
  * ``` js
@@ -402,13 +406,16 @@ export function createHydrationRenderer(
   return baseCreateRenderer(options, createHydrationFunctions)
 }
 
-// overload 1: no hydration
+// 千变万化的options体现出来了。
+// 传入的options不同使Renderer的应用不同。
+
+// overload 1: no hydration for 浏览器
 function baseCreateRenderer<
   HostNode = RendererNode,
   HostElement = RendererElement
 >(options: RendererOptions<HostNode, HostElement>): Renderer<HostElement>
 
-// overload 2: with hydration
+// overload 2: with hydration for 混合应用
 function baseCreateRenderer(
   options: RendererOptions<Node, Element>,
   createHydrationFns: typeof createHydrationFunctions
@@ -424,6 +431,7 @@ function baseCreateRenderer(
     initFeatureFlags()
   }
 
+  // 这里是自定义的函数
   const {
     insert: hostInsert,
     remove: hostRemove,
